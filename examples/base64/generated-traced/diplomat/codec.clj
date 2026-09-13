@@ -28,7 +28,7 @@
 (def ^:private is-ok-off-decode (delay (c-is-ok-offset-decode)))
 (defn decode [self input]
   (ffi/with-alloc [out @sz-decode-result]
-    (let [s (dr/writeable-capture (fn [w__] (c-decode (dr/ptr! self) input (count input) w__ out)))]
+    (let [s (dr/writeable-capture (fn [w__] (c-decode (dr/ptr! self) input (alength (.getBytes input)) w__ out)))]
       (dr/unwrap-result!
        (if (= 1 (ffi/read out :uint8 @is-ok-off-decode))
          {:ok? true :value s}

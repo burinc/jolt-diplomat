@@ -753,6 +753,8 @@ fn gen_method(
                 format!("(let [p {call}] (when (not= 0 p) {wrap}))")
             }
             ReturnKind::Opaque { target } => emit_opaque_wrap(target, owner, &call, false),
+            // 0 is truthy in Clojure/Jolt — normalize to a real boolean.
+            ReturnKind::PlainPrim { c_ty: "bool" } => format!("(not= 0 {call})"),
             _ => call,
         };
         let _ = writeln!(out, "(defn {fn_name} [{}] {body})", public_names.join(" "));
@@ -811,6 +813,8 @@ fn gen_method(
             Type::Slice(hir::Slice::Str(_, hir::StringEncoding::Utf8 | hir::StringEncoding::UnvalidatedUtf8)) => {
                 c_params.push(format!("const char* {cname}_data"));
                 c_params.push(format!("size_t {cname}_len"));
+                // DiplomatStringView.len must be a UTF-8 byte count; (count s)
+                // is a char count and undercounts non-ASCII strings.
                 if method_is_blocking {
                     // :blocking (__collect_safe) forbids a bare :string
                     // arg — see dr/with-c-string's doc comment in
@@ -820,11 +824,11 @@ fn gen_method(
                     // call can't invalidate it), pass that as :pointer.
                     let buf_var = format!("{pname}-cstr");
                     arg_specs.push(ArgSpec { clj_type: ":pointer".into(), call_expr: buf_var.clone() });
-                    arg_specs.push(ArgSpec { clj_type: ":size_t".into(), call_expr: format!("(count {pname})") });
+                    arg_specs.push(ArgSpec { clj_type: ":size_t".into(), call_expr: format!("(alength (.getBytes {pname}))") });
                     string_wraps.push((buf_var, pname.clone()));
                 } else {
                     arg_specs.push(ArgSpec { clj_type: ":string".into(), call_expr: pname.clone() });
-                    arg_specs.push(ArgSpec { clj_type: ":size_t".into(), call_expr: format!("(count {pname})") });
+                    arg_specs.push(ArgSpec { clj_type: ":size_t".into(), call_expr: format!("(alength (.getBytes {pname}))") });
                 }
                 call_args.push(format!("(DiplomatStringView){{ .data = {cname}_data, .len = {cname}_len }}"));
             }
@@ -1231,6 +1235,10 @@ fn gen_method(
     } else if let ReturnKind::Opaque { target } = &rk {
         let call_expr = format!("(c-{fn_name} {})", shim_call_exprs.join(" "));
         body_lines.push(emit_opaque_wrap(target, owner, &call_expr, false));
+    } else if let ReturnKind::PlainPrim { c_ty: "bool" } = &rk {
+        // 0 is truthy in Clojure/Jolt -- normalize to a real boolean
+        // (same convention as writeable-capture-when above).
+        body_lines.push(format!("(not= 0 (c-{fn_name} {}))", shim_call_exprs.join(" ")));
     } else {
         body_lines.push(format!("(c-{fn_name} {})", shim_call_exprs.join(" ")));
     }
@@ -1626,6 +1634,133 @@ mod tests {
             !out.contains(":string"),
             "save's generated defcfn must NOT take a bare :string arg — that's the exact \
              shape __collect_safe rejects at namespace load. got:\n{out}"
+        );
+    }
+
+    // (count s) is a char count; DiplomatStringView.len needs bytes.
+    #[test]
+    fn string_param_size_uses_byte_length_not_char_count() {
+        let tcx = lower(r#"
+            #[diplomat::bridge]
+            mod ffi {
+                #[diplomat::opaque]
+                pub struct Sink;
+
+                impl Sink {
+                    pub fn echo_len(&self, text: &str) -> u32 {
+                        text.len() as u32
+                    }
+                }
+            }
+        "#);
+        let m = find_opaque_method(&tcx, "Sink", "echo_len");
+        let mut out = String::new();
+        let mut shim_c = String::new();
+        let mut extra_requires = std::collections::BTreeSet::new();
+        let generated = gen_method(&tcx, "Sink", m, &mut out, &mut shim_c, &mut extra_requires);
+        assert!(generated, "&str param method must still generate a binding");
+        assert!(
+            out.contains("(alength (.getBytes text))"),
+            "text's DiplomatStringView length must be the UTF-8 byte count, got:\n{out}"
+        );
+        assert!(
+            !out.contains("(count text)"),
+            "must not measure a &str param with (count ...) (char count, not byte \
+             count), got:\n{out}"
+        );
+    }
+
+    // A plain bool return was unwrapped; 0 is truthy in Clojure/Jolt.
+    #[test]
+    fn plain_bool_return_is_wrapped_not_equal_zero() {
+        let tcx = lower(r#"
+            #[diplomat::bridge]
+            mod ffi {
+                #[diplomat::opaque]
+                pub struct Sink;
+
+                impl Sink {
+                    pub fn is_ready(&self) -> bool {
+                        true
+                    }
+                }
+            }
+        "#);
+        let m = find_opaque_method(&tcx, "Sink", "is_ready");
+        let mut out = String::new();
+        let mut shim_c = String::new();
+        let mut extra_requires = std::collections::BTreeSet::new();
+        let generated = gen_method(&tcx, "Sink", m, &mut out, &mut shim_c, &mut extra_requires);
+        assert!(generated, "plain bool-returning method must still generate a binding");
+        assert!(
+            out.contains("(not= 0 (c-is-ready"),
+            "a plain bool return must be wrapped with (not= 0 ...), same convention \
+             as writeable-capture-when, got:\n{out}"
+        );
+    }
+
+    // No-arg constructor returning an owned opaque (new_object/new_array's shape).
+    #[test]
+    fn no_arg_constructor_returning_owned_opaque_generates_binding() {
+        let tcx = lower(r#"
+            #[diplomat::bridge]
+            mod ffi {
+                #[diplomat::opaque]
+                pub struct Widget;
+
+                impl Widget {
+                    pub fn new() -> Box<Widget> {
+                        Box::new(Widget)
+                    }
+                }
+            }
+        "#);
+        let m = find_opaque_method(&tcx, "Widget", "new");
+        let mut out = String::new();
+        let mut shim_c = String::new();
+        let mut extra_requires = std::collections::BTreeSet::new();
+        let generated = gen_method(&tcx, "Widget", m, &mut out, &mut shim_c, &mut extra_requires);
+        assert!(generated, "a no-arg constructor returning an owned opaque must generate a binding");
+        assert!(
+            out.contains("(defn new []"),
+            "a no-arg constructor must take no public params, got:\n{out}"
+        );
+        assert!(
+            out.contains("(->Widget (c-new") && out.contains("(atom false))"),
+            "the returned opaque must be wrapped as a fresh (unclosed) Widget, got:\n{out}"
+        );
+    }
+
+    // &mut self, two &str params, bool return (set_string's shape).
+    #[test]
+    fn mut_self_two_string_params_returns_wrapped_bool_with_byte_lengths() {
+        let tcx = lower(r#"
+            #[diplomat::bridge]
+            mod ffi {
+                #[diplomat::opaque_mut]
+                pub struct Store(std::collections::HashMap<String, String>);
+
+                impl Store {
+                    pub fn set(&mut self, key: &str, value: &str) -> bool {
+                        self.0.insert(key.to_string(), value.to_string());
+                        true
+                    }
+                }
+            }
+        "#);
+        let m = find_opaque_method(&tcx, "Store", "set");
+        let mut out = String::new();
+        let mut shim_c = String::new();
+        let mut extra_requires = std::collections::BTreeSet::new();
+        let generated = gen_method(&tcx, "Store", m, &mut out, &mut shim_c, &mut extra_requires);
+        assert!(generated, "&mut self with two &str params must still generate a binding");
+        assert!(
+            out.contains("(alength (.getBytes key))") && out.contains("(alength (.getBytes value))"),
+            "both string params' lengths must be UTF-8 byte counts, got:\n{out}"
+        );
+        assert!(
+            out.contains("(not= 0 (c-set"),
+            "the bool return must be wrapped with (not= 0 ...), got:\n{out}"
         );
     }
 

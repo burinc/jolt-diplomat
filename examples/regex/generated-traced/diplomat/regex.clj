@@ -15,7 +15,7 @@
 (def ^:private is-ok-off-create (delay (c-is-ok-offset-create)))
 (defn create [pattern]
   (ffi/with-alloc [out @sz-create-result]
-    (c-create pattern (count pattern) out)
+    (c-create pattern (alength (.getBytes pattern)) out)
     (dr/unwrap-result!
      (if (= 1 (ffi/read out :uint8 @is-ok-off-create))
        {:ok? true :value (->Regex (ffi/read out :pointer 0) (atom false))}
@@ -26,16 +26,16 @@
 
 (ffi/defcfn ^:private c-is-match "jolt_rx_Regex_is_match_mv1" [:pointer :string :size_t] :int)
 (defn is-match [self text]
-  (c-is-match (dr/ptr! self) text (count text))
+  (not= 0 (c-is-match (dr/ptr! self) text (alength (.getBytes text))))
 )
 
 (ffi/defcfn ^:private c-find "jolt_rx_Regex_find_mv1" [:pointer :string :size_t :pointer] :int)
 (defn find [self text]
-  (dr/writeable-capture-when (fn [w__] (c-find (dr/ptr! self) text (count text) w__)))
+  (dr/writeable-capture-when (fn [w__] (c-find (dr/ptr! self) text (alength (.getBytes text)) w__)))
 )
 
 (ffi/defcfn ^:private c-replace-all "jolt_rx_Regex_replace_all_mv1" [:pointer :string :size_t :string :size_t :pointer] :void)
 (defn replace-all [self text replacement]
-  (dr/writeable-capture (fn [w__] (c-replace-all (dr/ptr! self) text (count text) replacement (count replacement) w__)))
+  (dr/writeable-capture (fn [w__] (c-replace-all (dr/ptr! self) text (alength (.getBytes text)) replacement (alength (.getBytes replacement)) w__)))
 )
 

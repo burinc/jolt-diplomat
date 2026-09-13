@@ -9,7 +9,7 @@
 
 (ffi/defcfn ^:private c-parse "jolt_Document_parse" [:string :size_t :int :int :int :int] :pointer)
 (defn parse [text opts]
-  (->Document (c-parse text (count text) (if (:tables opts) 1 0) (if (:strikethrough opts) 1 0) (if (:footnotes opts) 1 0) (if (:tasklists opts) 1 0)) (atom false))
+  (->Document (c-parse text (alength (.getBytes text)) (if (:tables opts) 1 0) (if (:strikethrough opts) 1 0) (if (:footnotes opts) 1 0) (if (:tasklists opts) 1 0)) (atom false))
 )
 
 (ffi/defcfn ^:private c-to-html "jolt_Document_to_html" [:pointer :pointer] :void)

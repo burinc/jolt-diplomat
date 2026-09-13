@@ -115,7 +115,7 @@ mod ffi {
         // -- builder API (added for lambda-mvp-rst: Jolt has no native
         // JSON library, so a handler that wants to *build* a response
         // object — not just parse/read one — needs these. See
-        // lambda-mvp-jlt's handler.clj, which hand-assembles JSON by
+        // lambda-mvp-rst's handler.clj, which hand-assembles JSON by
         // string interpolation for exactly this reason.)
 
         pub fn new_object() -> Box<JsonValue> {
@@ -130,6 +130,8 @@ mod ffi {
             Box::new(JsonValue(serde_json::Value::String(value.to_string())))
         }
 
+        /// NaN/Infinity become JSON `null` — serde_json can't represent
+        /// non-finite floats.
         pub fn new_number(value: f64) -> Box<JsonValue> {
             let n = serde_json::Number::from_f64(value)
                 .map(serde_json::Value::Number)
@@ -155,6 +157,7 @@ mod ffi {
             }
         }
 
+        /// NaN/Infinity become JSON `null` — see `new_number`.
         pub fn set_number(&mut self, key: &str, value: f64) -> bool {
             match self.0.as_object_mut() {
                 Some(map) => {

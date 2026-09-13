@@ -117,9 +117,11 @@
   Example:
     (dr/load! \"/path/to/json-demo\" \"json_capi\")"
   [demo-dir lib-name]
+  ;; ~native-lib-ext splices the literal value in at expansion time,
+  ;; not a symbol reference to this (private) var from the use-site ns.
   `(do
-     (ffi/load-library (str ~demo-dir "/" ~lib-name "/target/release/lib" ~lib-name "." native-lib-ext))
-     (ffi/load-library (str ~demo-dir "/lib" ~lib-name "_shim." native-lib-ext))))
+     (ffi/load-library (str ~demo-dir "/" ~lib-name "/target/release/lib" ~lib-name "." ~native-lib-ext))
+     (ffi/load-library (str ~demo-dir "/lib" ~lib-name "_shim." ~native-lib-ext))))
 
 (defmacro with-primitive-buffer
   "Marshals a Clojure seq of numbers to a temp C buffer of the given
@@ -216,7 +218,7 @@
      value
      (if (and message-fn error)
        (let [text (try (String. (message-fn error))
-                        (finally (close! error)))] ;; close even if message-fn itself throws
+                       (finally (close! error)))] ;; close even if message-fn itself throws
          (throw (ex-info (str method-name " failed: " text) {:diplomat/error text})))
        (throw (ex-info (str method-name " failed") {:diplomat/error error}))))))
 
@@ -290,7 +292,7 @@
   ([buf w label buf-size]
    (if (writeable-grow-failed? w)
      (throw (ex-info (str label ": buffer grow failed, output truncated")
-                      {:diplomat/buffer-size buf-size}))
+                     {:diplomat/buffer-size buf-size}))
      (writeable-read-bytes buf w))))
 
 ;; Doubles the buffer and retries rather than throwing on the first
@@ -322,7 +324,7 @@
         (do (ffi/free buf) (ffi/free w)
             (if (>= size max-buffer-size)
               (throw (ex-info (str label ": output exceeds max buffer size")
-                               {:diplomat/buffer-size size}))
+                              {:diplomat/buffer-size size}))
               (recur (* size 2))))
         (let [[_ result] outcome]
           (ffi/free buf) (ffi/free w)

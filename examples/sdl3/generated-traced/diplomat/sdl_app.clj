@@ -15,7 +15,7 @@
 (def ^:private is-ok-off-create (delay (c-is-ok-offset-create)))
 (defn create [title width height]
   (ffi/with-alloc [out @sz-create-result]
-    (c-create title (count title) width height out)
+    (c-create title (alength (.getBytes title)) width height out)
     (dr/unwrap-result!
      (if (= 1 (ffi/read out :uint8 @is-ok-off-create))
        {:ok? true :value (->SdlApp (ffi/read out :pointer 0) (atom false))}
@@ -31,7 +31,7 @@
 (def ^:private is-ok-off-load-font (delay (c-is-ok-offset-load-font)))
 (defn load-font [self path pt-size]
   (ffi/with-alloc [out @sz-load-font-result]
-    (c-load-font (dr/ptr! self) path (count path) pt-size out)
+    (c-load-font (dr/ptr! self) path (alength (.getBytes path)) pt-size out)
     (dr/unwrap-result!
      (if (= 1 (ffi/read out :uint8 @is-ok-off-load-font))
        {:ok? true :value nil}
@@ -42,7 +42,7 @@
 
 (ffi/defcfn ^:private c-draw-text "jolt_sdl3_SdlApp_draw_text_mv1" [:pointer :string :size_t :float :float :uint8 :uint8 :uint8 :uint8] :void)
 (defn draw-text [self text x y r g b a]
-  (c-draw-text (dr/ptr! self) text (count text) x y r g b a)
+  (c-draw-text (dr/ptr! self) text (alength (.getBytes text)) x y r g b a)
 )
 
 (ffi/defcfn ^:private c-sizeof-sdl-event-struct "jolt_sizeof_sdl_event_mv1" [] :int)
@@ -88,7 +88,7 @@
 (def ^:private is-ok-off-set-title (delay (c-is-ok-offset-set-title)))
 (defn set-title [self title]
   (ffi/with-alloc [out @sz-set-title-result]
-    (c-set-title (dr/ptr! self) title (count title) out)
+    (c-set-title (dr/ptr! self) title (alength (.getBytes title)) out)
     (dr/unwrap-result!
      (if (= 1 (ffi/read out :uint8 @is-ok-off-set-title))
        {:ok? true :value nil}

@@ -15,7 +15,7 @@
 (def ^:private is-ok-off-parse (delay (c-is-ok-offset-parse)))
 (defn parse [text]
   (ffi/with-alloc [out @sz-parse-result]
-    (c-parse text (count text) out)
+    (c-parse text (alength (.getBytes text)) out)
     (dr/unwrap-result!
      (if (= 1 (ffi/read out :uint8 @is-ok-off-parse))
        {:ok? true :value (->VersionReq (ffi/read out :pointer 0) (atom false))}
@@ -26,7 +26,7 @@
 
 (ffi/defcfn ^:private c-matches "jolt_sv_VersionReq_matches_mv1" [:pointer :pointer] :int)
 (defn matches [self version]
-  (c-matches (dr/ptr! self) (dr/ptr! version))
+  (not= 0 (c-matches (dr/ptr! self) (dr/ptr! version)))
 )
 
 (ffi/defcfn ^:private c-to-string "jolt_sv_VersionReq_to_string_mv1" [:pointer :pointer] :void)

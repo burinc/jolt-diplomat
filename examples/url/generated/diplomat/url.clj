@@ -15,7 +15,7 @@
 (def ^:private is-ok-off-parse (delay (c-is-ok-offset-parse)))
 (defn parse [input]
   (ffi/with-alloc [out @sz-parse-result]
-    (c-parse input (count input) out)
+    (c-parse input (alength (.getBytes input)) out)
     (dr/unwrap-result!
      (if (= 1 (ffi/read out :uint8 @is-ok-off-parse))
        {:ok? true :value (->Url (ffi/read out :pointer 0) (atom false))}

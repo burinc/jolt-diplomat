@@ -7,7 +7,8 @@
   Nothing here is Diplomat-specific beyond the shapes its C backend emits
   (DiplomatWriteable, flat Result structs, opaque-behind-a-pointer) — it's
   a thin layer over jolt.ffi."
-  (:require [jolt.ffi :as ffi]))
+  (:require [clojure.string :as str]
+            [jolt.ffi :as ffi]))
 
 ;; -----------------------------------------------------------------------
 ;; Opaque lifetime — Plan A (guardian) vs Plan B (explicit close!)
@@ -96,19 +97,31 @@
          ~@body
          (finally (close! ~binding))))))
 
+(def ^:private native-lib-ext
+  "cdylib/shim extension for the running OS -- macOS builds emit .dylib,
+  Linux (incl. Amazon Linux 2023 for Lambda deployment) emits .so. Neither
+  cargo nor `cc` (which links the shim) is asked to normalize this, so
+  load! must pick the right suffix itself rather than assuming macOS."
+  (if (str/includes? (str/lower-case (or (System/getProperty "os.name") "")) "mac")
+    "dylib"
+    "so"))
+
 (defmacro load!
   "Load the Rust cdylib and its generated shim dylib for a Diplomat-bound
   crate. lib-name is the snake_case name from [lib] name in Cargo.toml
   (e.g. \"json_capi\"). demo-dir is the directory containing both
-  lib{lib-name}.dylib (under {lib-name}/target/release/) and
-  lib{lib-name}_shim.dylib.
+  lib{lib-name}.{dylib,so} (under {lib-name}/target/release/) and
+  lib{lib-name}_shim.{dylib,so} -- extension picked per-OS, see
+  native-lib-ext.
 
   Example:
     (dr/load! \"/path/to/json-demo\" \"json_capi\")"
   [demo-dir lib-name]
+  ;; ~native-lib-ext splices the literal value in at expansion time,
+  ;; not a symbol reference to this (private) var from the use-site ns.
   `(do
-     (ffi/load-library (str ~demo-dir "/" ~lib-name "/target/release/lib" ~lib-name ".dylib"))
-     (ffi/load-library (str ~demo-dir "/lib" ~lib-name "_shim.dylib"))))
+     (ffi/load-library (str ~demo-dir "/" ~lib-name "/target/release/lib" ~lib-name "." ~native-lib-ext))
+     (ffi/load-library (str ~demo-dir "/lib" ~lib-name "_shim." ~native-lib-ext))))
 
 (defmacro with-primitive-buffer
   "Marshals a Clojure seq of numbers to a temp C buffer of the given
@@ -205,7 +218,7 @@
      value
      (if (and message-fn error)
        (let [text (try (String. (message-fn error))
-                        (finally (close! error)))] ;; close even if message-fn itself throws
+                       (finally (close! error)))] ;; close even if message-fn itself throws
          (throw (ex-info (str method-name " failed: " text) {:diplomat/error text})))
        (throw (ex-info (str method-name " failed") {:diplomat/error error}))))))
 
@@ -279,7 +292,7 @@
   ([buf w label buf-size]
    (if (writeable-grow-failed? w)
      (throw (ex-info (str label ": buffer grow failed, output truncated")
-                      {:diplomat/buffer-size buf-size}))
+                     {:diplomat/buffer-size buf-size}))
      (writeable-read-bytes buf w))))
 
 ;; Doubles the buffer and retries rather than throwing on the first
@@ -311,7 +324,7 @@
         (do (ffi/free buf) (ffi/free w)
             (if (>= size max-buffer-size)
               (throw (ex-info (str label ": output exceeds max buffer size")
-                               {:diplomat/buffer-size size}))
+                              {:diplomat/buffer-size size}))
               (recur (* size 2))))
         (let [[_ result] outcome]
           (ffi/free buf) (ffi/free w)

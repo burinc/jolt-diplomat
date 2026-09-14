@@ -19,7 +19,7 @@
 (def ^:private is-ok-off-new-on-disk (delay (c-is-ok-offset-new-on-disk)))
 (defn new-on-disk [path]
   (ffi/with-alloc [out @sz-new-on-disk-result]
-    (c-new-on-disk path (count path) out)
+    (c-new-on-disk path (alength (.getBytes path)) out)
     (dr/unwrap-result!
      (if (= 1 (ffi/read out :uint8 @is-ok-off-new-on-disk))
        {:ok? true :value (->SearchIndex (ffi/read out :pointer 0) (atom false))}
@@ -35,7 +35,7 @@
 (def ^:private is-ok-off-add-product (delay (c-is-ok-offset-add-product)))
 (defn add-product [self title description category price-cents]
   (ffi/with-alloc [out @sz-add-product-result]
-    (c-add-product (dr/ptr! self) title (count title) description (count description) category (count category) price-cents out)
+    (c-add-product (dr/ptr! self) title (alength (.getBytes title)) description (alength (.getBytes description)) category (alength (.getBytes category)) price-cents out)
     (dr/unwrap-result!
      (if (= 1 (ffi/read out :uint8 @is-ok-off-add-product))
        {:ok? true :value nil}
@@ -65,6 +65,6 @@
 
 (ffi/defcfn ^:private c-search "jolt_tantivy_SearchIndex_search_mv1" [:pointer :string :size_t :uint] :pointer)
 (defn search [self query limit]
-  (result-set/->ResultSet (c-search (dr/ptr! self) query (count query) limit) (atom false))
+  (result-set/->ResultSet (c-search (dr/ptr! self) query (alength (.getBytes query)) limit) (atom false))
 )
 
